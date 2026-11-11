@@ -1,9 +1,12 @@
-# VRM RETRO VIEWER（試作 v5）
+# VRM RETRO VIEWER
 
-VRM（0.x / 1.0）を開くと、Pyxel 3 のレトロな 3D で表示するビューアです。231 種類のモーション（CC0）で動かせて、2D ゲーム用のスプライトシート（PNG と GIF）を zip で書き出せます。
+- 公開：https://haruka-apps-games.itch.io/vrm-retro-viewer（itch.io、無料の HTML5 ツール）
+- 記事：https://qiita.com/haruka_apps/items/29b897418b601cfacb6c
+
+VRM（0.x / 1.0）を開くと、Pyxel 3 のレトロな 3D で表示するビューアです。231 種類のモーション（CC0）で動かせて、2D ゲーム用のスプライトシート（PNG と GIF）や、Pyxel 3 用の 3D データを zip で書き出せます。
 
 - ファイルはどこにも送りません。読み込みも変換も、ブラウザ（または自分の PC）の中だけで行います。
-- itch.io の HTML5 ツールとして公開する前提です。C&M 用ではありません（`os`・`js` などを使います）。
+- ツール本体は itch.io の HTML5 ツールです（`os`・`js` などを使うので、ツール本体は Code & Magic では動きません）。書き出した Pyxel 用 3D データは Code & Magic でも動きます。
 
 ## 動かし方
 
@@ -92,7 +95,7 @@ VRM に書かれた利用条件（meta）を表示します。改変禁止・再
 | `model.tmx` | メッシュ、骨、ウェイト、パレット、元 VRM の情報（numpy の npz を base64 の文字にしたもの） |
 | `tex_*.png` | テクスチャ（パレットの色だけで描いたもの） |
 | `motions.tmx` | 231 モーション（同じく base64、約 2.8 MB） |
-| `vrm_figure.py` | 読み込みと再生のコード（pyxel・numpy・json だけ。os / sys なし） |
+| `vrm_figure.py` | 読み込みと再生のコード（pyxel・numpy・json・base64・io だけ。os / sys なし） |
 | `sample_3d.py` | 床の上を歩かせるサンプル（`pyxel run sample_3d.py`） |
 | `README.txt` / `HOW_TO_RUN.txt` | 使い方、元 VRM の利用条件、免責 / 動かし方（英語と日本語） |
 
@@ -104,7 +107,8 @@ fig.play("walk")
 fig.animate(1 / 30)          # 毎フレーム
 ```
 
-- `.tmx` にしているのは、Code & Magic にアップロードできる形式（.py / .png / .tmx / .glb / .ogg / .pyxres）に合わせるためです。C&M では、全ファイルを上げて sample_3d.py を main.py に名前を変えます
+- `.tmx` にしているのは、Code & Magic にアップロードできる形式（.py / .png / .tmx / .glb / .ogg / .pyxres）に合わせるためです。中身は 1×1 の Tiled のマップで、property "data" に npz を base64 で入れています（base64 の文字だけでは C&M に「中身が .tmx と一致しません」と断られます）
+- C&M では、全ファイルを上げて sample_3d.py を main.py に名前を変えます
 - パレットの 16〜255 番を使います（255 = マゼンタのカラーキー）。0〜15 番はゲーム側の色のままです
 - 書き出し中は、ボタンが押せなくなり、進み具合（%）が出ます
 
@@ -139,21 +143,26 @@ fig.animate(1 / 30)          # 毎フレーム
 - `web/index.html`：`<pyxel-play packages="numpy,pillow">` で起動。ファイルは Pyodide の `/tmp/inbox/` に書き込み、ボタンの命令は `pyxel._vrmv` に積みます。Pyxel からは `js.vrmvInfo()` などでパネルを更新し、ダウンロードは `_savePyxelFile` を使います
 - `tools/build_web.py`：main.py・vrm_io.py・sample_sprites.py・motions.npz・vrm_figure.py・sample_3d.py を .pyxapp にまとめ、itch 用 zip を作ります
 
-## 確認したこと（クラウド、Pyxel 3.0.0 デスクトップ）
+## 確認したこと
 
-- VRM 1.0（CC0 の千駄ヶ谷 渋）で表示、モーション切替、スプライト書き出し、jump の GIF と PNG を目で確認
-- zip の中身と、PNG・GIF の背景が透明なこと
-- 書き出した sheet.json でスプライトのサンプルが動く（歩き・攻撃）
-- 書き出し中の進み具合の表示（Pyxel の画面）
-- 231 モーション全部のスプライト書き出し（8 方向 × 8 コマ、64 px）：クラウドで約 3 分、zip 約 12 MB。サンプルが palette の方法で正しい色で動く
-- サンプルアバター（軽量版）で表示とモーション
-- 231 モーションを VRM 1.0 で 1 枚に並べて目で確認（壊れた 7 本を外し、KayKit の腕を直した）。VRM 0.x でも KayKit の動きを確認
-- 3D 書き出し：VRM 1.0 と VRM 0.x（zip 約 2.9 MB）。書き出したフォルダだけで sample_3d.py が動き、歩く・走る・パンチ・ジャンプの向きが正しい。1 フレームの更新（スキニング）約 8 ms
+クラウド（Linux、Pyxel 3.0.1 デスクトップ版）：
+- VRM 1.0（千駄ヶ谷 渋）と VRM 0.x（自作）で表示、モーション切替、スプライト書き出し、3D 書き出し
+- 231 モーションを 1 枚に並べて目で確認（8 本を外し、KayKit の腕を直した）
+- スプライトの zip の中身、PNG・GIF の背景が透明なこと、書き出した sheet.json でサンプルが正しい色で動くこと
+- 231 モーション全部のスプライト書き出し（64 px・8 方向・8 コマ）：153 秒、11.8 MB
+- 3D 書き出し：0.7 秒、zip 約 2.9 MB。書き出したファイルだけで sample_3d.py が動き、`__file__` が無い環境でも動く
+- 読み込み：千駄ヶ谷 渋 0.28 秒、0.x の自作（51,503 三角形）0.37 秒。スキニング約 7 ms
+
+ブラウザ（作者が Mac で確認、Pyxel 3.0.1）：
+- 上のバー・右のパネル・Try sample・絞り込み欄・All ボタン・進み具合のバー・書き出しとダウンロード
+- 千駄ヶ谷 渋の読み込み 0.51 秒。231 モーション（128 px・8 方向・12 コマ）の書き出しで zip 48.3 MB
+
+Code & Magic（作者が確認）：
+- 書き出した 3D データ（model.tmx・motions.tmx・tex_*.png・vrm_figure.py・main.py）が動く
 
 ## 確認していないこと
 
-- 新しい画面（バー、パネル、進み具合のバー、ボタンの無効化）を実際のブラウザで動かすこと。クラウドからは pyxel.js を読めないため、JavaScript の文法チェックだけしています
-- Pyxel 3.0.1 での動作（クラウドは 3.0.0）
 - スマホでの表示
 - Windows で HOW_TO_RUN.txt の手順どおりに動かすこと
-- vrm_figure.py を Code & Magic の中で動かすこと（禁止モジュールは使っていませんが、試していません）
+- Safari・Firefox など、作者が使ったもの以外のブラウザ
+- ブラウザでの書き出しの時間（測っていない）
