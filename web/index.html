@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VRM Retro Viewer</title>
+<style>
+  :root { --bar: 44px; --panel: 270px; --bg: #1b1f33; --ink: #e8e8f0; --dim: #9aa3c7; --accent: #7696de; --warn: #d4186c; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.45 system-ui, sans-serif; }
+  button, select { font: inherit; }
+  /* tool bar */
+  #bar { position: fixed; top: 0; left: 0; right: 0; height: var(--bar); z-index: 1000; box-sizing: border-box;
+         display: flex; gap: 6px; align-items: center; padding: 0 10px; background: #2b335f; overflow-x: auto; white-space: nowrap; }
+  #bar .sep { width: 1px; height: 24px; background: #4a5590; margin: 0 4px; flex: none; }
+  .btn { background: var(--accent); color: #10142a; border: 0; padding: 6px 11px; border-radius: 4px; cursor: pointer; font-weight: 600; flex: none; }
+  .btn.ghost { background: #3a4580; color: var(--ink); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  #bar label.btn input { display: none; }
+  #bar select { padding: 5px; border-radius: 4px; border: 0; background: #3a4580; color: var(--ink); flex: none; }
+  /* Pyxel screen and the info panel (pyxel.js sizes the screen to the page: force it into its box) */
+  #pyxel-screen { position: fixed !important; top: var(--bar) !important; left: 0 !important; right: var(--panel) !important;
+                  bottom: 0 !important; width: auto !important; height: auto !important; }
+  #panel { position: fixed; top: var(--bar); right: 0; bottom: 0; width: var(--panel); box-sizing: border-box; overflow-y: auto;
+           padding: 12px 14px; background: #20253f; border-left: 1px solid #333c6a; z-index: 900; }
+  #panel h2 { font-size: 14px; margin: 14px 0 6px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; }
+  #panel h2:first-child { margin-top: 0; }
+  #title { font-size: 16px; font-weight: 700; }
+  .warn { background: var(--warn); color: #fff; padding: 3px 7px; border-radius: 3px; margin: 3px 0; font-weight: 600; }
+  .lic div { color: var(--ink); }
+  .muted { color: var(--dim); }
+  #status { margin-top: 10px; color: var(--dim); min-height: 1.4em; }
+  #status.err { color: #ff9798; }
+  #progress { margin-top: 10px; }
+  #pbar { height: 8px; background: #333c6a; border-radius: 4px; overflow: hidden; }
+  #pfill { height: 100%; width: 0; background: #70c6a9; transition: width .1s; }
+  .row { display: flex; gap: 8px; align-items: center; margin: 5px 0; }
+  .row select { flex: 1; padding: 4px; }
+  #motions { max-height: 210px; overflow-y: auto; margin: 6px 0 4px; padding: 4px 6px; background: #1b1f33; border-radius: 4px; }
+  #motions h3 { font-size: 12px; margin: 6px 0 2px; color: var(--accent); cursor: pointer; }
+  #motions h3:hover { text-decoration: underline; }
+  #motions label { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #mcount { margin-bottom: 8px; }
+  #motions [hidden] { display: none; }
+  #mfilter { width: 100%; box-sizing: border-box; padding: 5px 6px; margin-top: 6px; border: 0; border-radius: 4px;
+             background: #3a4580; color: var(--ink); font: inherit; }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+  #motions label { white-space: nowrap; }
+  a { color: var(--accent); }
+  @media (max-width: 760px) {           /* phones: the panel goes under the screen */
+    :root { --panel: 0px; }
+    #pyxel-screen { bottom: 42% !important; }
+    #panel { top: 58%; left: 0; width: auto; border-left: 0; border-top: 1px solid #333c6a; }
+  }
+</style>
+<script src="https://kitao.dev/pyxel/3.0.1/pyxel.js"></script>
+</head>
+<body>
+<div id="bar">
+  <label class="btn">Open VRM <input type="file" id="file" accept=".vrm,.glb"></label>
+  <button class="btn ghost" id="sample" type="button" title="Load a free sample avatar (Sendagaya Shibu, CC0, 4 MB)">Try sample</button>
+  <span class="sep"></span>
+  <select id="motion" disabled title="Motion"></select>
+  <button class="btn ghost need" id="tpose" disabled>T-pose</button>
+  <button class="btn ghost need" id="reset" disabled title="Front view">Reset view</button>
+  <span class="sep"></span>
+  <button class="btn ghost need" id="shot" disabled title="Save a PNG of the screen">Screenshot</button>
+  <button class="btn ghost need" id="gif" disabled title="Save the last few seconds as a GIF">GIF</button>
+</div>
+<div id="pyxel-screen"></div>
+<div id="panel">
+  <h2>Avatar</h2>
+  <div id="title" class="muted">Drop a .vrm file on the screen, use Open VRM, or press Try sample.</div>
+  <div id="author" class="muted"></div>
+  <div id="warnings"></div>
+  <div id="license" class="lic"></div>
+  <div id="stats" class="muted"></div>
+  <h2>Export sprite sheets</h2>
+  <div class="row"><span>Cell</span><select id="cell"><option>32</option><option>48</option><option selected>64</option><option>96</option><option>128</option></select><span>px</span></div>
+  <div class="row"><span>Directions</span><select id="dirs"><option value="8" selected>8</option><option value="4">4</option></select></div>
+  <div class="row"><span>Frames</span><select id="frames"><option>4</option><option>6</option><option selected>8</option><option>12</option></select></div>
+  <input id="mfilter" type="text" placeholder="Filter motions (e.g. sword)" autocomplete="off">
+  <div class="row"><button class="btn ghost small" id="mall" type="button" title="Check every motion shown (the filter applies)">All</button>
+    <button class="btn ghost small" id="mdef" type="button">Default</button>
+    <button class="btn ghost small" id="mnone" type="button">None</button></div>
+  <div id="motions"></div>
+  <div id="mcount" class="muted"></div>
+  <button class="btn need exp" id="export" disabled>Download sprites ZIP</button>
+  <div class="muted" style="margin-top:6px">One PNG + one GIF per motion (transparent background), sheet.json, and an optional Pyxel sample.</div>
+  <h2>Export 3D for Pyxel</h2>
+  <button class="btn need exp" id="export3d" disabled>Download 3D ZIP</button>
+  <div class="muted" style="margin-top:6px">The converted avatar (reduced colours and textures) with all motions, a loader and a sample for Pyxel 3 games. Needs Python + Pyxel.</div>
+  <div id="progress" hidden><div id="pbar"><div id="pfill"></div></div><div id="ptext" class="muted"></div></div>
+  <div id="status"></div>
+  <h2>About</h2>
+  <div class="muted">Your file never leaves your device: it is read and converted inside this page.<br>
+  Drag on the screen to turn, wheel to zoom.<br>
+  231 motions: Quaternius Universal Animation Library 1 &amp; 2 and KayKit Character Animations (Kay Lousberg), all CC0, via open-vrma.<br>
+  Made with <a href="https://github.com/kitao/pyxel" target="_blank" rel="noopener">Pyxel 3</a> by Takashi Kitao (MIT License).
+  Runs on Pyodide (MPL-2.0), NumPy (BSD-3-Clause) and Pillow (MIT-CMU).<br>
+  Tool by haruka_apps.</div>
+  <div class="muted" style="margin-top:6px">Sample avatar: Sendagaya Shibu, a CC0 VRoid sample model (VRM data by coati;
+  redistribution and modification allowed). For this tool its textures were reduced and its facial expressions removed.</div>
+  <h2>Disclaimer</h2>
+  <div class="muted">This tool and everything it exports are provided "AS IS", without warranty of any kind.
+  The author accepts no liability for any damage or trouble arising from their use.
+  You are responsible for following the license of the VRM you load.</div>
+</div>
+<pyxel-play root="." name="vrm_viewer.pyxapp" packages="numpy,pillow"></pyxel-play>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const DEFAULT = ["idle", "walk", "run", "jump", "punch", "hit", "death"];
+  function ready() { return window.pyxelContext && window.pyxelContext.initialized; }
+  function status(text, err) { $("status").textContent = text || ""; $("status").className = err ? "err" : ""; }
+  // ---- page -> Pyxel
+  function send(cmd) {
+    if (!ready()) return;
+    window.pyxelContext.pyodide.runPython(
+      "import pyxel; pyxel._vrmv = list(getattr(pyxel, '_vrmv', None) or []) + [" + JSON.stringify(cmd) + "]");
+  }
+  async function openFile(file) {
+    if (!ready()) { status("Still starting... please try again in a moment.", true); return; }
+    const FS = window.pyxelContext.pyodide.FS;
+    try { FS.mkdirTree("/tmp/inbox"); } catch (e) {}
+    const name = Date.now() + "_" + file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    FS.writeFile("/tmp/inbox/" + name, new Uint8Array(await file.arrayBuffer()));
+    status("Opening " + file.name + " ...");
+  }
+  $("sample").addEventListener("click", async () => {
+    if (!ready()) { status("Still starting... please try again in a moment.", true); return; }
+    $("sample").disabled = true;
+    status("Downloading the sample avatar (4 MB) ...");
+    try {
+      const r = await fetch("sample.vrm");
+      if (!r.ok) throw new Error(r.status);
+      await openFile(new File([await r.blob()], "Sendagaya_Shibu_sample.vrm"));
+    } catch (e) { status("Could not load the sample: " + e.message, true); }
+    $("sample").disabled = false;
+  });
+  $("file").addEventListener("change", (e) => { if (e.target.files.length) openFile(e.target.files[0]); e.target.value = ""; });
+  $("motion").addEventListener("change", (e) => send("motion:" + e.target.value));
+  $("tpose").addEventListener("click", () => send("motion:tpose"));
+  $("reset").addEventListener("click", () => send("view:reset"));
+  $("shot").addEventListener("click", () => send("shot"));
+  $("gif").addEventListener("click", () => send("gif"));
+  $("export").addEventListener("click", () => {
+    const motions = Array.from(document.querySelectorAll("#motions input:checked")).map((c) => c.value);
+    if (!motions.length) { status("Choose at least one motion.", true); return; }
+    busy(true, "Starting ...");
+    send("export:" + JSON.stringify({ cell: +$("cell").value, dirs: +$("dirs").value, frames: +$("frames").value, motions }));
+  });
+  $("export3d").addEventListener("click", () => { busy(true, "Starting ..."); send("export3d"); });
+  // while an export runs: buttons off (no double clicks), progress bar on
+  let exporting = false;
+  function busy(on, text, pct) {
+    exporting = on;
+    document.querySelectorAll(".exp").forEach((b) => (b.disabled = on));
+    $("file").disabled = on;
+    $("sample").disabled = on;
+    $("progress").hidden = !on;
+    if (on) { $("ptext").textContent = text || ""; $("pfill").style.width = (pct || 0) + "%"; status(""); }
+  }
+  // ---- Pyxel -> page (called from main.py through the js module)
+  window.vrmvReady = (json) => {
+    const d = JSON.parse(json);
+    const groups = [];
+    d.motions.forEach((m) => { let g = groups.find((x) => x.name === m.group);
+      if (!g) groups.push(g = { name: m.group, list: [] }); g.list.push(m); });
+    $("motion").innerHTML = groups.map((g) => `<optgroup label="${g.name} (${g.list.length})">` +
+      g.list.map((m) => `<option value="${m.id}">${m.label}</option>`).join("") + "</optgroup>").join("");
+    $("motions").innerHTML = groups.map((g) => `<div class="grp"><h3 title="Click: check / uncheck this group">${g.name} (${g.list.length})</h3>` +
+      g.list.map((m) => `<label title="${m.id}"><input type="checkbox" value="${m.id}" ${DEFAULT.includes(m.id) ? "checked" : ""}> ${m.label}</label>`).join("") +
+      "</div>").join("");
+    countMotions();
+  };
+  function countMotions() {
+    const n = document.querySelectorAll("#motions input:checked").length;
+    const cells = n * +$("dirs").value * +$("frames").value, k = (+$("cell").value / 64) ** 1.4;
+    const mb = cells * k * 0.85 / 1024;                       // measured: about 0.85 KB per 64 px cell (PNG + GIF); bigger cells compress better
+    $("mcount").textContent = n + " motion" + (n === 1 ? "" : "s") + " selected, ZIP about " +
+      (mb < 1 ? "1" : Math.round(mb)) + " MB" + (n > 30 ? ", several minutes or more" : "");
+  }
+  $("motions").addEventListener("change", countMotions);
+  const shown = (root) => Array.from(root.querySelectorAll("label:not([hidden]) input"));
+  $("mall").addEventListener("click", () => { shown($("motions")).forEach((c) => (c.checked = true)); countMotions(); });
+  $("motions").addEventListener("click", (e) => {             // a group title: check all of it, or clear it if all are on
+    if (e.target.tagName !== "H3") return;
+    const boxes = shown(e.target.parentElement);
+    const on = !boxes.every((c) => c.checked);
+    boxes.forEach((c) => (c.checked = on));
+    countMotions();
+  });
+  ["dirs", "frames", "cell"].forEach((id) => $(id).addEventListener("change", countMotions));
+  $("mdef").addEventListener("click", () => { document.querySelectorAll("#motions input").forEach((c) => (c.checked = DEFAULT.includes(c.value))); countMotions(); });
+  $("mnone").addEventListener("click", () => { document.querySelectorAll("#motions input").forEach((c) => (c.checked = false)); countMotions(); });
+  // Pyxel listens to the keyboard on the whole page: keep the keys typed here for the text box only
+  ["keydown", "keyup", "keypress"].forEach((t) => $("mfilter").addEventListener(t, (e) => e.stopPropagation()));
+  $("mfilter").addEventListener("input", (e) => {
+    const q = e.target.value.toLowerCase();
+    document.querySelectorAll("#motions label").forEach((l) => (l.hidden = q && !l.textContent.toLowerCase().includes(q)));
+    document.querySelectorAll("#motions .grp").forEach((g) => (g.hidden = !g.querySelector("label:not([hidden])")));
+  });
+  window.vrmvInfo = (json) => {
+    const d = JSON.parse(json);
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    $("title").textContent = d.title + "  (" + d.version + ")";
+    $("title").className = "";
+    $("author").textContent = "by " + d.author;
+    $("warnings").innerHTML = d.warnings.map((w) => `<div class="warn">${esc(w)}</div>`).join("");
+    $("license").innerHTML = d.license.map((l) => /^https?:\/\//.test(l)
+      ? `<div><a href="${esc(l)}" target="_blank" rel="noopener">${esc(l)}</a></div>` : `<div>${esc(l)}</div>`).join("");
+    $("stats").textContent = `${d.tris.toLocaleString()} triangles, ${d.parts} parts, converted in ${d.seconds} s` +
+      (d.missing.length ? ` - missing bones: ${d.missing.join(", ")}` : "");
+    document.querySelectorAll(".need").forEach((b) => (b.disabled = false));
+    $("motion").disabled = false;
+    $("motion").value = "idle";
+  };
+  window.vrmvProgress = (json) => {
+    const d = JSON.parse(json);
+    if (d.busy) busy(true, (d.kind === "3d" ? "Exporting 3D: " : "Exporting sprites: ") + d.text + "  (" + d.pct + "%)", d.pct);
+    else busy(false);
+  };
+  window.vrmvStatus = (json) => { const d = JSON.parse(json); status(d.text, d.error); };
+  window.vrmvMotion = (json) => { const d = JSON.parse(json); if (d.id !== "tpose") $("motion").value = d.id; };
+</script>
+</body>
+</html>
