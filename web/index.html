@@ -45,6 +45,11 @@
              background: #3a4580; color: var(--ink); font: inherit; }
   .btn.small { padding: 4px 10px; font-size: 12px; }
   #motions label { white-space: nowrap; }
+  #adv { margin: 4px 0; }
+  #adv summary { cursor: pointer; }
+  #adv .row span { flex: 1; }
+  #adv .row select { flex: none; }
+  #mcount .note { color: #e9c35b; }
   a { color: var(--accent); }
   @media (max-width: 760px) {           /* phones: the panel goes under the screen */
     :root { --panel: 0px; }
@@ -58,6 +63,7 @@
 <div id="bar">
   <label class="btn">Open VRM <input type="file" id="file" accept=".vrm,.glb"></label>
   <button class="btn ghost" id="sample" type="button" title="Load a free sample avatar (Sendagaya Shibu, CC0, 4 MB)">Try sample</button>
+  <label class="btn ghost" title="Add your own motions: .fbx (Mixamo, Quaternius ...; FBX Binary) or .vrma (VRM Animation). They stay on your device.">Add motion <input type="file" id="fbx" accept=".fbx,.vrma" multiple></label>
   <span class="sep"></span>
   <select id="motion" disabled title="Motion"></select>
   <button class="btn ghost need" id="tpose" disabled>T-pose</button>
@@ -69,23 +75,31 @@
 <div id="pyxel-screen"></div>
 <div id="panel">
   <h2>Avatar</h2>
-  <div id="title" class="muted">Drop a .vrm file on the screen, use Open VRM, or press Try sample.</div>
+  <div id="title" class="muted">Drop a .vrm file on the screen, use Open VRM, or press Try sample. .fbx (Mixamo ...) and .vrma files add motions.</div>
   <div id="author" class="muted"></div>
   <div id="warnings"></div>
   <div id="license" class="lic"></div>
   <div id="stats" class="muted"></div>
   <h2>Export sprite sheets</h2>
-  <div class="row"><span>Cell</span><select id="cell"><option>32</option><option>48</option><option selected>64</option><option>96</option><option>128</option></select><span>px</span></div>
+  <div class="row"><span>Size</span><select id="cell"><option>32</option><option>48</option><option selected>64</option><option>96</option><option>128</option></select><span>px</span></div>
   <div class="row"><span>Directions</span><select id="dirs"><option value="8" selected>8</option><option value="4">4</option></select></div>
-  <div class="row"><span>Frames</span><select id="frames"><option>4</option><option>6</option><option selected>8</option><option>12</option></select></div>
+  <div class="row"><span>Animation</span><select id="anim">
+    <option value="6">Retro (6 fps)</option><option value="10" selected>Standard (10 fps)</option><option value="15">Smooth (15 fps)</option></select></div>
+  <div id="animhint" class="muted"></div>
+  <details id="adv"><summary class="muted">Advanced</summary>
+    <div class="row"><span>Same frame count for every motion</span><select id="fixed">
+      <option value="0" selected>Off</option><option>4</option><option>6</option><option>8</option><option>12</option></select></div>
+  </details>
   <input id="mfilter" type="text" placeholder="Filter motions (e.g. sword)" autocomplete="off">
   <div class="row"><button class="btn ghost small" id="mall" type="button" title="Check every motion shown (the filter applies)">All</button>
-    <button class="btn ghost small" id="mdef" type="button">Default</button>
+    <button class="btn ghost small" id="myours" type="button" title="Only the motions you added" hidden>Yours</button>
+    <button class="btn ghost small" id="mdef" type="button" title="idle, walk, run, jump, punch, hit, death">Basic</button>
     <button class="btn ghost small" id="mnone" type="button">None</button></div>
   <div id="motions"></div>
   <div id="mcount" class="muted"></div>
-  <button class="btn need exp" id="export" disabled>Download sprites ZIP</button>
-  <div class="muted" style="margin-top:6px">One PNG + one GIF per motion (transparent background), sheet.json, and an optional Pyxel sample.</div>
+  <div class="row"><button class="btn need exp" id="export" disabled>Download sprites ZIP</button>
+    <button class="btn ghost need exp" id="preview" disabled title="Show on the screen how the sprites will look">Preview</button></div>
+  <div class="muted" style="margin-top:6px">One PNG + one GIF per motion (transparent background), sheet.json, and an optional Pyxel sample. The GIF shows the same frames as the PNG.</div>
   <h2>Export 3D for Pyxel</h2>
   <button class="btn need exp" id="export3d" disabled>Download 3D ZIP</button>
   <div class="muted" style="margin-top:6px">The converted avatar (reduced colours and textures) with all motions, a loader and a sample for Pyxel 3 games. Needs Python + Pyxel.</div>
@@ -108,7 +122,9 @@
 <pyxel-play root="." name="vrm_viewer.pyxapp" packages="numpy,pillow"></pyxel-play>
 <script>
   const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const DEFAULT = ["idle", "walk", "run", "jump", "punch", "hit", "death"];
+  const MOT = {};                                              // id -> {seconds, loop, ...} (for the size estimate)
   function ready() { return window.pyxelContext && window.pyxelContext.initialized; }
   function status(text, err) { $("status").textContent = text || ""; $("status").className = err ? "err" : ""; }
   // ---- page -> Pyxel
@@ -137,6 +153,7 @@
     $("sample").disabled = false;
   });
   $("file").addEventListener("change", (e) => { if (e.target.files.length) openFile(e.target.files[0]); e.target.value = ""; });
+  $("fbx").addEventListener("change", async (e) => { for (const f of Array.from(e.target.files)) await openFile(f); e.target.value = ""; });
   $("motion").addEventListener("change", (e) => send("motion:" + e.target.value));
   $("tpose").addEventListener("click", () => send("motion:tpose"));
   $("reset").addEventListener("click", () => send("view:reset"));
@@ -146,15 +163,31 @@
     const motions = Array.from(document.querySelectorAll("#motions input:checked")).map((c) => c.value);
     if (!motions.length) { status("Choose at least one motion.", true); return; }
     busy(true, "Starting ...");
-    send("export:" + JSON.stringify({ cell: +$("cell").value, dirs: +$("dirs").value, frames: +$("frames").value, motions }));
+    send("export:" + JSON.stringify(Object.assign(spriteSettings(), { motions })));
   });
   $("export3d").addEventListener("click", () => { busy(true, "Starting ..."); send("export3d"); });
+  // the sprite settings, and the live preview on the Pyxel screen (it follows every change of them)
+  function spriteSettings() {
+    const fixed = +$("fixed").value;
+    return Object.assign({ cell: +$("cell").value, dirs: +$("dirs").value }, fixed ? { frames: fixed } : { fps: +$("anim").value });
+  }
+  let previewing = false;
+  $("preview").addEventListener("click", () => send(previewing ? "preview:off" : "preview:" + JSON.stringify(spriteSettings())));
+  ["dirs", "anim", "fixed", "cell"].forEach((id) => $(id).addEventListener("change", () => {
+    if (!$("preview").disabled) send("preview:" + JSON.stringify(spriteSettings()));
+  }));
+  window.vrmvPreview = (json) => {
+    previewing = JSON.parse(json).on;
+    $("preview").textContent = previewing ? "Back to 3D" : "Preview";
+    $("preview").title = previewing ? "Back to the 3D view you can turn" : "Show on the screen how the sprites will look";
+  };
   // while an export runs: buttons off (no double clicks), progress bar on
   let exporting = false;
   function busy(on, text, pct) {
     exporting = on;
     document.querySelectorAll(".exp").forEach((b) => (b.disabled = on));
     $("file").disabled = on;
+    $("fbx").disabled = on;
     $("sample").disabled = on;
     $("progress").hidden = !on;
     if (on) { $("ptext").textContent = text || ""; $("pfill").style.width = (pct || 0) + "%"; status(""); }
@@ -162,22 +195,62 @@
   // ---- Pyxel -> page (called from main.py through the js module)
   window.vrmvReady = (json) => {
     const d = JSON.parse(json);
+    d.motions.forEach((m) => (MOT[m.id] = m));
+    const sel = d.select || [];                                 // the motions just added (from one file)
+    const first = !$("motions").querySelector("input");          // later calls (a motion was added): keep what was chosen
+    let checked = new Set(Array.from(document.querySelectorAll("#motions input:checked")).map((c) => c.value));
+    const hadYours = Array.from(document.querySelectorAll("#motions input")).some((c) => MOT[c.value] && MOT[c.value].user);
+    // the first motion of your own: export just yours, unless you had already changed the choice
+    if (sel.length && !hadYours && checked.size === DEFAULT.length && DEFAULT.every((id) => checked.has(id))) checked = new Set();
+    sel.forEach((id) => checked.add(id));
+    const current = $("motion").value;
+    const yours = d.motions.filter((m) => m.user);
+    d.motions = yours.concat(d.motions.filter((m) => !m.user));  // your motions on top
+    $("myours").hidden = !yours.length;
     const groups = [];
     d.motions.forEach((m) => { let g = groups.find((x) => x.name === m.group);
       if (!g) groups.push(g = { name: m.group, list: [] }); g.list.push(m); });
     $("motion").innerHTML = groups.map((g) => `<optgroup label="${g.name} (${g.list.length})">` +
-      g.list.map((m) => `<option value="${m.id}">${m.label}</option>`).join("") + "</optgroup>").join("");
+      g.list.map((m) => `<option value="${m.id}">${esc(m.label)}</option>`).join("") + "</optgroup>").join("");
     $("motions").innerHTML = groups.map((g) => `<div class="grp"><h3 title="Click: check / uncheck this group">${g.name} (${g.list.length})</h3>` +
-      g.list.map((m) => `<label title="${m.id}"><input type="checkbox" value="${m.id}" ${DEFAULT.includes(m.id) ? "checked" : ""}> ${m.label}</label>`).join("") +
+      g.list.map((m) => `<label title="${m.id}"><input type="checkbox" value="${m.id}" ${(first ? DEFAULT.includes(m.id) : checked.has(m.id)) ? "checked" : ""}> ${esc(m.label)}</label>`).join("") +
       "</div>").join("");
+    $("motion").value = sel[0] || current || "idle";
+    if (sel.length) $("motions").scrollTop = 0;                    // show the motion you just added (it is on top)
+    $("mfilter").dispatchEvent(new Event("input"));
     countMotions();
   };
+  // frames of one motion in the sheet: by speed (fps) or a fixed count; long motions stop at what fits in 8192 px
+  function sheetFrames(m, fps, fixed, cell) {
+    if (fixed) return fixed;
+    const n = Math.max(2, Math.round(m.seconds * fps) + (m.loop ? 0 : 1));
+    return Math.min(n, Math.floor(8192 / cell));
+  }
+  const HINT = { 6: "NES feel, small files", 10: "SNES feel", 15: "PS1 feel, bigger files" };
   function countMotions() {
-    const n = document.querySelectorAll("#motions input:checked").length;
-    const cells = n * +$("dirs").value * +$("frames").value, k = (+$("cell").value / 64) ** 1.4;
-    const mb = cells * k * 0.85 / 1024;                       // measured: about 0.85 KB per 64 px cell (PNG + GIF); bigger cells compress better
-    $("mcount").textContent = n + " motion" + (n === 1 ? "" : "s") + " selected, ZIP about " +
-      (mb < 1 ? "1" : Math.round(mb)) + " MB" + (n > 30 ? ", several minutes or more" : "");
+    const ids = Array.from(document.querySelectorAll("#motions input:checked")).map((c) => c.value);
+    const n = ids.length, cell = +$("cell").value, dirs = +$("dirs").value, fps = +$("anim").value, fixed = +$("fixed").value;
+    $("anim").disabled = !!fixed;
+    $("animhint").textContent = fixed ? "Off while Advanced sets a frame count." : HINT[fps];
+    let frames = 0, gifs = 0;
+    const capped = [];
+    ids.forEach((id) => {
+      const m = MOT[id] || { seconds: 1, loop: true };
+      const f = sheetFrames(m, fps, fixed, cell);
+      if (!fixed && f < Math.max(2, Math.round(m.seconds * fps) + (m.loop ? 0 : 1)))
+        capped.push({ label: m.label || id, fps: f / m.seconds });
+      frames += f;
+      gifs += f;                                                 // the GIF shows the same frames (front row)
+    });
+    // measured at 64 px: about 1.1 KB per sheet cell (PNG) and 1.3 KB per GIF frame; bigger cells compress better
+    const mb = (frames * dirs * 1.1 + gifs * 1.3) * (cell / 64) ** 1.4 / 1024;
+    let html = n + " motion" + (n === 1 ? "" : "s") + " · " + frames + " frames · ZIP about " + (mb < 1 ? "1" : Math.round(mb)) + " MB";
+    if (capped.length === 1)
+      html += `<div class="note">${esc(capped[0].label)} is long, so it will be a little less smooth (about ${Math.round(capped[0].fps)} fps) to fit in one image.</div>`;
+    else if (capped.length > 1)
+      html += `<div class="note">${capped.length} long motions (${capped.slice(0, 3).map((c) => esc(c.label)).join(", ")}${capped.length > 3 ? ", ..." : ""}) will be a little less smooth to fit in one image.</div>`;
+    if (frames * dirs + gifs > 6000) html += '<div class="note">A big export: it may take several minutes.</div>';
+    $("mcount").innerHTML = html;
   }
   $("motions").addEventListener("change", countMotions);
   const shown = (root) => Array.from(root.querySelectorAll("label:not([hidden]) input"));
@@ -189,7 +262,8 @@
     boxes.forEach((c) => (c.checked = on));
     countMotions();
   });
-  ["dirs", "frames", "cell"].forEach((id) => $(id).addEventListener("change", countMotions));
+  ["dirs", "anim", "fixed", "cell"].forEach((id) => $(id).addEventListener("change", countMotions));
+  $("myours").addEventListener("click", () => { document.querySelectorAll("#motions input").forEach((c) => (c.checked = !!(MOT[c.value] && MOT[c.value].user))); countMotions(); });
   $("mdef").addEventListener("click", () => { document.querySelectorAll("#motions input").forEach((c) => (c.checked = DEFAULT.includes(c.value))); countMotions(); });
   $("mnone").addEventListener("click", () => { document.querySelectorAll("#motions input").forEach((c) => (c.checked = false)); countMotions(); });
   // Pyxel listens to the keyboard on the whole page: keep the keys typed here for the text box only
@@ -216,7 +290,8 @@
   };
   window.vrmvProgress = (json) => {
     const d = JSON.parse(json);
-    if (d.busy) busy(true, (d.kind === "3d" ? "Exporting 3D: " : "Exporting sprites: ") + d.text + "  (" + d.pct + "%)", d.pct);
+    const what = { "3d": "Exporting 3D: ", fbx: "Reading motions: " }[d.kind] || "Exporting sprites: ";
+    if (d.busy) busy(true, what + d.text + "  (" + d.pct + "%)", d.pct);
     else busy(false);
   };
   window.vrmvStatus = (json) => { const d = JSON.parse(json); status(d.text, d.error); };

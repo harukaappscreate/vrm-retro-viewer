@@ -42,8 +42,8 @@ python main.py avatar.vrm      # ファイルを直接開く
 
 - 「Try sample」：同梱のサンプルアバター（千駄ヶ谷 渋、約 4 MB）を読み込みます。押したときだけダウンロードします
 
-- 上のバー：Open VRM、モーション選択、T-pose、Reset view、Screenshot、GIF
-- 右のパネル：アバター名・作者・ライセンス（URL はクリックできます）・警告、書き出し設定
+- 上のバー：Open VRM、Try sample、Add motion（FBX / VRMA）、モーション選択、T-pose、Reset view、Screenshot、GIF
+- 右のパネル：アバター名・作者・ライセンス（URL はクリックできます）・警告、書き出し設定、Preview
 - スマホ幅では、パネルは画面の下に移ります
 - 画面のドラッグで回転、ホイールで拡大縮小
 
@@ -54,7 +54,8 @@ python main.py avatar.vrm      # ファイルを直接開く
 | ← → / ↑ ↓ | 回す / 近づく・離れる |
 | SPACE | 次のモーション |
 | T | T ポーズ |
-| E | 標準設定でスプライトを書き出し（idle / walk / run / jump / punch / hit / death） |
+| E | 標準設定でスプライトを書き出し（idle / walk / run / jump / punch / hit / death、64 px・8 方向・10 fps） |
+| V | スプライトのプレビュー（64 px・8 方向・10 fps）の入 / 切（デスクトップ） |
 | D | Pyxel 用 3D を書き出し |
 | P / G | スクリーンショット / GIF |
 | L | ライセンス表示の入 / 切（デスクトップ） |
@@ -66,14 +67,24 @@ VRM に書かれた利用条件（meta）を表示します。改変禁止・再
 
 ## 書き出し（`<名前>_sprites.zip`）
 
-設定：1 マスの大きさ（32〜128 px）、向き（8 または 4）、コマ数（4〜12）、モーション。
+設定：
+
+- **Size**：1 マスの大きさ（32〜128 px）
+- **Directions**：向き（8 または 4）
+- **Animation**：なめらかさ。Retro（6 fps）/ Standard（10 fps、最初の値）/ Smooth（15 fps）。どれも Pyxel の 30 fps を割り切れる速さです。コマは 1/fps 秒おきに描くので、長いモーションほどコマが増えます
+- **Advanced**：どのモーションも同じコマ数（4 / 6 / 8 / 12）にしたいときはこちら
+- **モーション**：チェックしたもの。下に「○ motions · ○ frames · ZIP about ○ MB」が出ます
+
+1 枚の横幅は 8192 px までです（64 px なら 128 コマ）。それより長いモーションは全体に広げて描くので、そのモーションだけ少しカクカクになります（パネルに名前と fps が出ます）。
+
+**Preview**：設定を変えると、Pyxel の画面が「書き出したときの見た目」（同じ大きさ・同じ速さ・同じ角度、8 方向を 3 × 3 に並べる）に切り替わります。「Back to 3D」で戻ります。
 
 | ファイル | 中身 |
 |---|---|
 | `<名前>_<モーション>.png` | 1 モーション 1 枚。行 = 向き、列 = コマ |
-| `<名前>_<モーション>.gif` | 正面（下向き）のアニメーション GIF（2 倍の大きさ） |
+| `<名前>_<モーション>.gif` | PNG の正面（下向き）の行をそのままアニメーションにしたもの（同じコマ・同じ速さ、2 倍の大きさ） |
 | `<名前>_all.png` | 全モーションを縦に積んだ 1 枚。高さが 8192 px 以下のとき（少なめの書き出し）だけ作ります |
-| `sheet.json` | マスの大きさ、向きの順、モーションごとのファイル・コマ数・fps・ループ・`_all.png` での y 位置、`palette`（全 PNG が使う 256 色） |
+| `sheet.json` | マスの大きさ、向きの順、コマの決め方（`timing`）、モーションごとのファイル・コマ数・fps・ループ・`_all.png` での y 位置、`palette`（全 PNG が使う 256 色） |
 | `README.txt` | 上の説明と、元 VRM の利用条件 |
 | `pyxel_sample/sample_sprites.py` | Pyxel のサンプル（任意。`pyxel run pyxel_sample/sample_sprites.py`）。Python を使わない人は無視してかまいません |
 | `pyxel_sample/HOW_TO_RUN.txt` | サンプルの動かし方（Windows / Mac、英語と日本語） |
@@ -93,6 +104,7 @@ VRM に書かれた利用条件（meta）を表示します。改変禁止・再
 | `model.tmx` | メッシュ、骨、ウェイト、パレット、元 VRM の情報（numpy の npz を base64 の文字にしたもの） |
 | `tex_*.png` | テクスチャ（パレットの色だけで描いたもの） |
 | `motions.tmx` | 231 モーション（同じく base64、約 2.8 MB） |
+| `my_motions.tmx` | 自分で足したモーション（FBX / VRMA）があるときだけ。`vrm_figure.py` が一緒に読みます。id は `my_` で始まります |
 | `vrm_figure.py` | 読み込みと再生のコード（pyxel・numpy・json・base64・io だけ。os / sys なし） |
 | `sample_3d.py` | 床の上を歩かせるサンプル（`pyxel run sample_3d.py`） |
 | `README.txt` / `HOW_TO_RUN.txt` | 使い方、元 VRM の利用条件、免責 / 動かし方（英語と日本語） |
@@ -106,7 +118,7 @@ fig.animate(1 / 30)          # 毎フレーム
 ```
 
 - `.tmx` にしているのは、Code & Magic にアップロードできる形式（.py / .png / .tmx / .glb / .ogg / .pyxres）に合わせるためです。中身は 1×1 の Tiled のマップで、property "data" に npz を base64 で入れています（base64 の文字だけでは C&M に「中身が .tmx と一致しません」と断られます）
-- C&M では、全ファイルを上げて sample_3d.py を main.py に名前を変えます
+- C&M では、全ファイルを上げて sample_3d.py を main.py に名前を変えます。`my_motions.tmx` が 3 MB を超えたときは、README.txt とページにそう出ます（C&M の 1 ファイルの上限）
 - パレットの 16〜255 番を使います（255 = マゼンタのカラーキー）。0〜15 番はゲーム側の色のままです
 - 書き出し中は、ボタンが押せなくなり、進み具合（%）が出ます
 
@@ -123,10 +135,29 @@ fig.animate(1 / 30)          # 毎フレーム
 - 外したもの：変身テスト 2 本、地面の下や空中から現れる出現モーション 5 本、1 m よじ登り（スプライトのマスからはみ出すため）
 - KayKit は元のキャラが太めなので、腕が体から大きく離れています。焼くときに両腕を 28 度下げて直しています
 - ループかどうか：Quaternius は名前の `_Loop`、KayKit は Idle・Pose・「〜ing」の名前（Chopping など）をループ、それ以外（Chop など）は 1 回再生
-- `tools/make_motions.py` が `vrma/q/`（Quaternius）と `vrma/kk/medium/`・`vrma/kk/large/`（KayKit）を `motions.npz`（約 2.1 MB）に焼きます。元の .vrma はリポジトリに入れていません（置き場所は `tools/make_motions.py` の先頭に書いてあります）（30 fps、その場で動く形）。jump と ninja_jump は 開始 + 空中（0.4 秒）+ 着地 をつないでいます
+- `tools/make_motions.py` が `vrma/q/`（Quaternius）と `vrma/kk/medium/`・`vrma/kk/large/`（KayKit）を `motions.npz`（約 2.1 MB）に焼きます。（30 fps、その場で動く形）。元の .vrma はリポジトリに入れていません（置き場所は `tools/make_motions.py` の先頭に書いてあります）。jump と ninja_jump は 開始 + 空中（0.4 秒）+ 着地 をつないでいます
 - 骨ごとに「T ポーズからのワールド回転の差」を持たせているので、骨の長さや向きが違う VRM にもそのまま当てはまります（VRM 0.x は 180 度回してから当てます）
-- ページのモーション一覧は、グループ分け・絞り込み・「All / Default / None」ボタン付きです。All は表示中（絞り込み後）のものを全部チェック、グループ名のクリックでそのグループを入 / 切
+- ページのモーション一覧は、グループ分け・絞り込み・「All / Yours / Basic / None」ボタン付きです。All は表示中（絞り込み後）のものを全部チェック、Yours は自分で足したものだけ、Basic は標準の 7 本。グループ名のクリックでそのグループを入 / 切
 - Pyxel では、`pyxel.colors` を sheet.json の `palette` にしてから、各 PNG を `Image.from_image` で読むと色がずれません（サンプルはこの方法で、使うモーションの PNG だけ読みます）
+
+## 自分のモーションを足す（FBX / VRMA）
+
+**Add motion**（またはドロップ）で、手持ちのモーションを足せます。一覧の一番上の「Your motions」に入り、スプライトにも 3D にも書き出せます。ファイルはどこにも送りません。
+
+| 形式 | 読めるもの |
+|---|---|
+| `.vrma`（VRM Animation） | 1 ファイル 1 本。同梱モーションと同じ計算で読みます |
+| `.fbx` | FBX 7.x のバイナリ。人型の骨で、骨の名前が Mixamo（`mixamorig:LeftArm` など）・Unreal 式（`upperarm_l` など。Quaternius も）・VRoid（`J_Bip_L_UpperArm` など）のもの。1 ファイルに何本入っていても全部足します（T ポーズだけのものは除く）。Y が上でも Z が上でも読めます |
+
+読めないときは理由を出して止めます：文字（ASCII）の FBX、FBX 6 以前、骨の名前が分からない / 人型でない、アニメーションが無い。
+
+基準の姿勢が A ポーズ（腕が斜め下）の骨は、読み込みますが「腕がずれて見えるかもしれない」と警告を出します。T ポーズに直す処理はありません。ほかにも、背骨の数が違う、指が曲がった姿勢が基準、などの細かいずれは分かりません。
+
+- 名前の頭は `my_`。Loop / Idle / Pose が名前にある FBX のアニメーションはくり返し、ほかは 1 回だけ（名前に Loop が 1 つもないファイルは全部くり返し）
+- 足したモーションは、入手元の条件のままです。Mixamo なら、自分のゲームの中で使うのはよいが、元のファイルやデータ単体（素材集など）として配らない（[Mixamo FAQ](https://community.adobe.com/t5/mixamo-discussions/mixamo-faq-licensing-royalties-ownership-eula-and-tos/td-p/13234775)）。書き出す README.txt にもそう書きます
+- Mixamo から落とすときは：FBX Binary、Without Skin でよい、30 fps
+- 読み込んだ KayKit の .vrma には、同梱版の「腕を 28 度下げる」直しはかかりません
+- 日本語などのファイル名は、名前が「motion」になります（英数字の名前を使ってください）
 
 ## サンプルアバター（web/sample.vrm）
 
@@ -139,7 +170,9 @@ fig.animate(1 / 30)          # 毎フレーム
 
 | 場所 | 中身 |
 |---|---|
-| `main.py` | ビューア本体（Pyxel 3）。CPU スキニング、スプライトと 3D の書き出し |
+| `main.py` | ビューア本体（Pyxel 3）。CPU スキニング、スプライトと 3D の書き出し、プレビュー |
+| `fbx_io.py` | FBX（バイナリ 7.x）の骨とアニメーションを読む。骨の名前の対応表、向きの読み取り |
+| `vrma_io.py` | VRM Animation（.vrma）を読む |
 | `vrm_io.py` | VRM 0.x / 1.0（GLB）を numpy のデータにする。パレットも作る |
 | `vrm_figure.py`、`sample_3d.py`、`sample_sprites.py` | 書き出す zip に入れるファイル |
 | `motions.npz` | 231 モーション（`tools/make_motions.py` で作る） |
@@ -161,21 +194,31 @@ fig.animate(1 / 30)          # 毎フレーム
 - VRM 1.0（千駄ヶ谷 渋）と VRM 0.x で表示、モーション切替、スプライト書き出し、3D 書き出し
 - 231 モーションを 1 枚に並べて目で確認（8 本を外し、KayKit の腕を直した）
 - スプライトの zip の中身、PNG・GIF の背景が透明なこと、書き出した sheet.json でサンプルが正しい色で動くこと
-- 231 モーション全部のスプライト書き出し（64 px・8 方向・8 コマ）：153 秒、11.8 MB
+- 231 モーション全部のスプライト書き出し（64 px・8 方向・8 コマ固定）：153 秒、11.8 MB（最初の版で測定）
+- FBX：Mixamo の 2 本（Waving、Snake Hip Hop Dance）と Quaternius の UAL1_Standard.fbx（42 本）。FBX の骨そのものと、元の GLB と比べて動きが合うこと（GLB との差は平均 0〜1.7 度）
+- VRMA：同梱と同じ元ファイルを読むと、float16 にしたとき同梱のデータと 1 ビットも違わない
+- 対応外の FBX の表示（ASCII、FBX 6、骨の名前が分からない、アニメーションが無い）と、A ポーズの判定（腕を 40 度下げた姿勢を作って確認）
+- 6 / 10 / 15 fps と固定コマ数での書き出し（コマ数・fps・画像の大きさ）、GIF のコマが PNG と同じこと、プレビューが選んだ fps で切り替わること
+- 自分のモーション入りの 3D 書き出しで、sample_3d.py が 231 本 + 足した分を読むこと
 - 3D 書き出し：0.7 秒、zip 約 2.9 MB。書き出したファイルだけで sample_3d.py が動き、`__file__` が無い環境でも動く
 - 読み込み：千駄ヶ谷 渋 0.28 秒、0.x のアバター（51,503 三角形）0.37 秒。スキニング約 7 ms
 
 ブラウザ（作者が Mac で確認、Pyxel 3.0.1）：
 - 上のバー・右のパネル・Try sample・絞り込み欄・All ボタン・進み具合のバー・書き出しとダウンロード
+- Add motion：Mixamo の FBX（3 本）、手持ちの VRMA、プレビュー
 - 千駄ヶ谷 渋の読み込み 0.51 秒。231 モーション（128 px・8 方向・12 コマ）の書き出しで zip 48.3 MB
 
 Code & Magic（作者が確認）：
 - 書き出した 3D データ（model.tmx・motions.tmx・tex_*.png・vrm_figure.py・main.py）が動く
+- 自分のモーション入り（my_motions.tmx 付き）も動く
 
 ## 確認していないこと
 
 - スマホでの表示
 - Windows で HOW_TO_RUN.txt の手順どおりに動かすこと
+- 本物の A ポーズの FBX（Unreal のマネキンなど）、VRoid や Blender（Rigify）から書き出した FBX
+- ブラウザで大きな FBX（23 MB の UAL1_Standard.fbx など）を読む時間
+- 新しい設定（10 fps）で 231 本全部を書き出す時間
 - Safari・Firefox など、作者が使ったもの以外のブラウザ
 - ブラウザでの書き出しの時間（測っていない）
 

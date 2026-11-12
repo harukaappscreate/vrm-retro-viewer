@@ -13,3 +13,8 @@ vrm_viewer_itch.zip
 # source data for the tools (not redistributed here, see README)
 vrma/
 samples/
+
+# test files for your own motions (Mixamo terms: do not redistribute)
+mixamo_test/
+fbx_test/
+*.fbx

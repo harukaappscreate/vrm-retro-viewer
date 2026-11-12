@@ -17,7 +17,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         app = Path(tmp) / "vrm_viewer"
         app.mkdir()
-        for f in ("main.py", "vrm_io.py", "sample_sprites.py", "motions.npz", "vrm_figure.py", "sample_3d.py"):
+        for f in ("main.py", "vrm_io.py", "fbx_io.py", "vrma_io.py", "sample_sprites.py", "motions.npz", "vrm_figure.py", "sample_3d.py"):
             shutil.copy(ROOT / f, app / f)
         subprocess.run(["pyxel", "package", str(app), str(app / "main.py")], cwd=tmp, check=True)
         shutil.copy(Path(tmp) / "vrm_viewer.pyxapp", WEB / "vrm_viewer.pyxapp")

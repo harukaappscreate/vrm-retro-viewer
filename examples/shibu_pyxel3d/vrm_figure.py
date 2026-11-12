@@ -79,6 +79,18 @@ class Motions:
         self.D = {m["id"]: d["d_" + m["id"]].astype(np.float32) for m in self.meta}
         self.Hp = {m["id"]: d["h_" + m["id"]].astype(np.float32) for m in self.meta}
 
+    def merge(self, path):
+        """Add the motions of another file (my_motions.tmx: the ones you added to the viewer as FBX)."""
+        d = load_data(path)
+        if [str(b) for b in d["bones"]] != self.bones:
+            raise ValueError("bones differ from motions.tmx")
+        for m in json.loads(bytes(d["meta"]).decode()):
+            if m["id"] not in self.by_id:
+                self.meta.append(m)
+                self.by_id[m["id"]] = m
+                self.D[m["id"]] = d["d_" + m["id"]].astype(np.float32)
+                self.Hp[m["id"]] = d["h_" + m["id"]].astype(np.float32)
+
     def frame(self, mid, t):
         D, Hp, m = self.D[mid], self.Hp[mid], self.by_id[mid]
         n = len(D)
@@ -141,6 +153,11 @@ class Figure(Node):
             self.p1.append(np.hstack([p["pos"], np.ones((len(p["pos"]), 1), np.float32)]))
         self.draw_order = sorted(range(len(self.parts)), key=lambda i: {"OPAQUE": 0, "MASK": 1}.get(self.parts[i]["alpha"], 2))
         self.motions = motions or Motions(find_data(folder, "motions"))
+        if motions is None:
+            try:
+                self.motions.merge(find_data(folder, "my_motions"))     # motions you added (FBX), if any
+            except OSError:
+                pass
         self.motion = "idle"
         self.t = 0.0
         self.q, self.tr = self.rest_q.copy(), self.rest_t.copy()

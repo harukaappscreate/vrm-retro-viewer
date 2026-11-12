@@ -26,6 +26,8 @@ import numpy as np
 import pyxel
 from pyxel.cube import Camera, Mat4, Node, Primitive, Shading, Vec3
 
+import fbx_io
+import vrma_io
 import vrm_io as V
 
 W, H = 320, 240
@@ -64,6 +66,19 @@ class Motions:
         self.by_id = {m["id"]: m for m in self.meta}
         self.D = {m["id"]: d["d_" + m["id"]].astype(np.float32) for m in self.meta}
         self.Hp = {m["id"]: d["h_" + m["id"]].astype(np.float32) for m in self.meta}
+
+    def add(self, label, D, Hp, group, loop=True):
+        """Add a motion the user loaded (FBX / VRMA).  Returns its id ("my_<name>", made unique)."""
+        base = "my_" + "".join(ch for ch in label.lower().replace(" ", "_") if ch.isalnum() or ch == "_")[:40]
+        mid, k = base, 2
+        while mid in self.by_id:
+            mid, k = "%s_%d" % (base, k), k + 1
+        m = dict(id=mid, label=label, group=group, source="user", loop=loop, frames=len(D),
+                 seconds=round((len(D) - 1) / 30.0, 3))
+        self.meta.append(m)
+        self.by_id[mid] = m
+        self.D[mid], self.Hp[mid] = D.astype(np.float32), Hp.astype(np.float32)
+        return mid
 
     def frame(self, mid, t):
         """(deltas (B, 4), hips offset (3,)) at time t (seconds); loops wrap, one-shots hold the last frame."""
@@ -231,12 +246,18 @@ class App:
         self.draw_ms = 0.0
         self.note, self.note_t = "", 0.0
         self.job, self.job_kind, self.progress = None, "", (0.0, "")
+        self.preview, self.preview_t, self.preview_k = None, 0.0, None
         os.makedirs(INBOX, exist_ok=True)
         self.seen = set(os.listdir(INBOX))
         self.used = set()
-        Bridge.send("vrmvReady", {"motions": [dict(id=m["id"], label=m["label"], loop=m["loop"], group=m.get("group", ""))
-                                             for m in self.motions.meta]})
+        self.send_motions()
         pyxel.run(self.update, self.draw)
+
+    def send_motions(self, select=None):
+        Bridge.send("vrmvReady", {"motions": [dict(id=m["id"], label=m["label"], loop=m["loop"], group=m.get("group", ""),
+                                                   seconds=m.get("seconds", 1.0), user=m.get("source") == "user")
+                                             for m in self.motions.meta],
+                                 "select": select if isinstance(select, list) or select is None else [select]})
 
     # ------------------------------------------------------------------ input files
     def new_file(self):
@@ -302,6 +323,69 @@ class App:
                                      seconds=round(t2 - t0, 2), missing=missing))
         Bridge.send("vrmvStatus", {"text": "Ready. Drag to turn, wheel to zoom."})
 
+    def read_motion(self, path):
+        """A motion file (.fbx or .vrma): bake every animation in it like the bundled motions and add them to the list.
+        A generator (one animation per step), run like an export so the page stays alive with big files."""
+        name = os.path.basename(path)
+        if path.startswith(INBOX):
+            name = name.split("_", 1)[-1]                    # the page adds "<time>_" in front
+        stem = os.path.splitext(name)[0].replace("_", " ").strip() or "motion"
+        added = []
+        try:
+            yield 0.02, "Reading " + name
+            t0 = time.perf_counter()
+            data = open(path, "rb").read()
+            if name.lower().endswith(".vrma"):
+                D, Hp, _sec, _name = vrma_io.read_vrma(data, self.motions.bones)
+                added.append((self.motions.add(stem, D, Hp, "Your motions", loop=True), stem))
+                rig = "VRM"
+            else:
+                ff = fbx_io.FbxFile(data)
+                human, rig = fbx_io.humanoid(ff.bones)
+                takes = [k for k, t in enumerate(ff.takes) if t[2] > 0 and not is_tpose(t[0])]
+                if not takes:
+                    raise ValueError("no animation in this file")
+                droop = fbx_io.arm_droop(ff.motion(takes[0]), human) if "leftUpperArm" in human else 0.0
+                named = len(takes) > 1                       # several animations: use their own names
+                loops = any("loop" in ff.takes[k][0].lower() for k in takes)
+                for n, k in enumerate(takes):
+                    take = ff.takes[k][0]
+                    D, Hp = fbx_io.to_viewer(ff.motion(k), self.motions.bones, human)
+                    label = take.replace("_", " ").strip() if named else stem
+                    loop = is_loop_name(take) if loops else True
+                    added.append((self.motions.add(label, D, Hp, "Your motions", loop=loop), label))
+                    yield (n + 1) / len(takes), "%s (%d/%d)" % (label, n + 1, len(takes))
+            sec = time.perf_counter() - t0
+        except Exception as e:
+            self.err = ("CANNOT READ MOTION: %s" % e)[:76].upper()
+            self.note, self.note_t = self.err, 4.0
+            Bridge.send("vrmvStatus", {"text": "Cannot read %s: %s" % (name, e), "error": True})
+            if added:                                        # some animations of the file were added before the error
+                self.send_motions(select=[a[0] for a in added])
+            return
+        finally:
+            try:
+                if path.startswith(INBOX):
+                    os.remove(path)
+            except OSError:
+                pass
+        self.err = ""
+        mid = added[0][0]
+        self.send_motions(select=[a[0] for a in added])
+        if self.fig is not None:
+            self.fig.play(mid)
+            Bridge.send("vrmvMotion", {"id": mid})
+        what = added[0][1] if len(added) == 1 else "%d motions from %s" % (len(added), name)
+        self.note = ("ADDED: " + what).upper()[:60]
+        self.note_t = 3.0
+        text = "Added %s (%s bone names, read in %.1f s)" % (what, rig, sec)
+        if name.lower().endswith(".fbx") and droop > 20:            # the rig rests in an A-pose, not a T-pose
+            text += (". Note: this skeleton rests in an A-pose (arms %d degrees down), so the arms may look wrong"
+                     % round(droop))
+            self.note = "A-POSE SKELETON: ARMS MAY LOOK WRONG"
+            self.note_t = 5.0
+        Bridge.send("vrmvStatus", {"text": text, "error": name.lower().endswith(".fbx") and droop > 20})
+
     # ------------------------------------------------------------------ commands from the page or keys
     def command(self, c):
         if self.state != "view":
@@ -309,6 +393,9 @@ class App:
         if c.startswith("motion:"):
             self.fig.play(c[7:])
             Bridge.send("vrmvMotion", {"id": self.fig.motion})
+        elif c.startswith("preview:"):
+            arg = c[8:]
+            self.set_preview(None if arg == "off" else json.loads(arg))
         elif c == "view:reset":
             self.yaw, self.pitch = 0.0, 8.0
             self.dist = max(2.2, self.fig.m.height * 2.3)
@@ -335,37 +422,41 @@ class App:
         fig = self.fig
         c = int(req.get("cell", 64))
         dirs = DIRS8 if int(req.get("dirs", 8)) == 8 else DIRS4
-        nfr = int(req.get("frames", 8))
         mids = [m for m in req.get("motions", ["idle", "walk"]) if m in self.motions.by_id] or ["idle"]
+        frames_of = {mid: sheet_frames(self.motions.by_id[mid], req, c) for mid in mids}
+        # by speed: frames exactly 1 / fps apart (6, 10, 15 fps divide Pyxel's 30), unless a long motion hit the cap
+        step = {mid: (1.0 / float(req["fps"]) if req.get("fps") and not req.get("frames")
+                      and frames_of[mid] < 8192 // c else None) for mid in mids}
         cam = self.stage.camera
         old = (cam.fov, cam.clear_color, cam.transform, fig.motion, fig.t)
-        h = fig.m.height
         cam.fov = 12.0
         cam.clear_color = V.KEY
-        dist = h * 1.3 / (2 * math.tan(math.radians(6.0)))           # room for jumps and arms
-        el = math.radians(25.0)
         name = "".join(ch for ch in fig.m.title if ch.isalnum() or ch in "_-")[:24] or "vrm"
         from PIL import Image
         files, sheet_meta = {}, {}
-        total, done = len(mids) * nfr, 0
+        nd = len(dirs)
+        work = sum(frames_of[mid] * (nd + 0.3) for mid in mids)   # draws (+ saving the PNG and the GIF)
+        total, done = work * 1.05, 0.0                            # + the combined image and the zip
+
+        def view(yaw, target, x, y):
+            self.sprite_camera(yaw)
+            self.stage.draw(x, y, c, c, target=target)
+
         for mid in mids:
             m = self.motions.by_id[mid]
             dur = m["seconds"]
+            nfr = frames_of[mid]
             sheet = pyxel.Image(c * nfr, c * len(dirs))
             for k in range(nfr):
                 fig.motion = mid
-                fig.t = dur * k / nfr if m["loop"] else dur * k / max(1, nfr - 1)
+                fig.t = frame_time(m, k, nfr, step[mid])
                 fig.pose(0.0)
                 fig.skin()
                 for row, dname in enumerate(dirs):
-                    yaw = DIRS8.index(dname) * 45.0
-                    eye = Vec3(math.sin(math.radians(yaw)) * dist * math.cos(el), h * 0.55 + dist * math.sin(el),
-                               math.cos(math.radians(yaw)) * dist * math.cos(el))
-                    cam.transform = Mat4.look_at(eye, Vec3(0.0, h * 0.55, 0.0), Vec3.UP)
-                    self.stage.draw(k * c, row * c, c, c, target=sheet)
-                done += 1
+                    view(DIRS8.index(dname) * 45.0, sheet, k * c, row * c)
+                done += nd
                 cam.fov, cam.clear_color, cam.transform, fig.motion, fig.t = old   # the screen keeps its own view
-                yield done / (total + 1), "%s %d/%d" % (m["label"], k + 1, nfr)
+                yield done / total, "%s %d/%d" % (m["label"], k + 1, nfr)
                 old = (cam.fov, cam.clear_color, cam.transform, fig.motion, fig.t)
                 cam.fov = 12.0
                 cam.clear_color = V.KEY
@@ -378,11 +469,13 @@ class App:
             Image.fromarray(a).save(b, "PNG", optimize=True)
             fn = "%s_%s.png" % (name, mid)
             files[fn] = b.getvalue()
-            fps = nfr / dur if m["loop"] else (nfr - 1) / dur
+            fps = 1.0 / step[mid] if step[mid] else (nfr / dur if m["loop"] else (nfr - 1) / dur)
             sheet_meta[mid] = dict(file=fn, frames=nfr, fps=round(fps, 2), loop=m["loop"], gif="%s_%s.gif" % (name, mid))
-            files[sheet_meta[mid]["gif"]] = gif_of_row(a, 0, c, nfr, fps, m["loop"])
+            files[sheet_meta[mid]["gif"]] = gif_of_row(a, 0, c, nfr, fps, m["loop"])   # the front row: a preview
+            done += nfr * 0.3
         cam.fov, cam.clear_color, cam.transform, fig.motion, fig.t = old
         # every motion stacked in one image too, while that stays a sensible size (a long selection skips it)
+        yield done / total, "Combining"
         all_name = None
         if len(mids) * len(dirs) * c <= 8192:
             sheets = [np.array(Image.open(io.BytesIO(files[sheet_meta[mid]["file"]]))) for mid in mids]
@@ -397,7 +490,11 @@ class App:
             Image.fromarray(allimg).save(b, "PNG", optimize=True)
             all_name = "%s_all.png" % name
             files[all_name] = b.getvalue()
+        timing = ("%d frames per motion" % int(req["frames"])) if req.get("frames") else \
+            ("%g fps (each motion has as many frames as its length needs)" % float(req.get("fps", 10)))
+        mine = [self.motions.by_id[mid]["label"] for mid in mids if self.motions.by_id[mid].get("source") == "user"]
         info = dict(cell=c, directions=dirs, motions=sheet_meta, all_in_one=all_name, key_color="#FF00FF",
+                    timing=timing, user_motions=mine,
                     palette=["%06X" % (int(v) & 0xFFFFFF) for v in list(pyxel.colors)[:256]],
                     source=dict(title=fig.m.title, author=fig.m.author, version=fig.m.version, license=fig.m.license,
                                 warnings=fig.m.warnings))
@@ -410,7 +507,7 @@ class App:
                 "矢印で歩く、X を押しながらで走る、Z で攻撃（punch / sword / spell を書き出したとき）。").encode()
         except OSError:
             pass
-        yield 1.0, "Zipping"
+        yield max(done / total, 0.97), "Zipping"
         zpath = os.path.join(TMP, name + "_sprites.zip")
         with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
             for fn, data in files.items():
@@ -445,7 +542,8 @@ class App:
         info = dict(title=m.title, author=m.author, version=m.version, license=m.license, warnings=m.warnings,
                     height=float(m.height), face_yaw=float(m.face_yaw), flip=bool(fig.flip), hips=int(hips),
                     hip_h=float(fig.hip_h), textures=len(m.tex_index), parts=parts, tris=int(m.tris),
-                    motions=len(self.motions.meta))
+                    motions=len(self.motions.meta),
+                    user_motions=[x["label"] for x in self.motions.meta if x.get("source") == "user"])
         arrays.update(parent=np.asarray(m.parent, np.int32), order=np.asarray(m.order, np.int32),
                       rest_t=m.rest_t.astype(np.float32), rest_q=m.rest_q.astype(np.float32),
                       rest_s=m.rest_s.astype(np.float32), rest_wq=fig.rest_wq.astype(np.float32),
@@ -464,6 +562,10 @@ class App:
             files["tex_%d.png" % k] = b.getvalue()
             yield 0.6 + 0.35 * (k + 1) / len(m.tex_index), "Texture %d/%d" % (k + 1, len(m.tex_index))
         files["motions.tmx"] = tmx_wrap(open(os.path.join(HERE, "motions.npz"), "rb").read(), "vrm_motions")
+        mine = self.user_motions_npz()
+        if mine:
+            files["my_motions.tmx"] = tmx_wrap(mine, "vrm_motions")   # kept apart: motions.tmx stays under 3 MB
+            info["my_motions_mb"] = round(len(files["my_motions.tmx"]) / 1e6, 2)
         for fn in ("vrm_figure.py", "sample_3d.py"):
             try:
                 files[fn] = open(os.path.join(HERE, fn), "rb").read()
@@ -482,7 +584,87 @@ class App:
         size = os.path.getsize(zpath)
         self.note = "SAVED %s_PYXEL3D.ZIP (%.1f MB)" % (name.upper(), size / 1e6)
         self.note_t = 4.0
-        Bridge.send("vrmvStatus", {"text": "Saved %s_pyxel3d.zip (%.1f MB)" % (name, size / 1e6)})
+        text = "Saved %s_pyxel3d.zip (%.1f MB)" % (name, size / 1e6)
+        if info.get("my_motions_mb", 0) > 3.0:
+            text += (". my_motions.tmx is %.1f MB: too big for Code & Magic (3 MB per file), fine in Pyxel"
+                     % info["my_motions_mb"])
+        Bridge.send("vrmvStatus", {"text": text})
+
+    def sprite_camera(self, yaw):
+        """The camera of the sprite sheets: from above at 25 degrees, the whole figure with room for jumps and arms."""
+        h = self.fig.m.height
+        dist = h * 1.3 / (2 * math.tan(math.radians(6.0)))
+        el = math.radians(25.0)
+        eye = Vec3(math.sin(math.radians(yaw)) * dist * math.cos(el), h * 0.55 + dist * math.sin(el),
+                   math.cos(math.radians(yaw)) * dist * math.cos(el))
+        self.stage.camera.transform = Mat4.look_at(eye, Vec3(0.0, h * 0.55, 0.0), Vec3.UP)
+
+    # ------------------------------------------------------------------ live preview of the sprite export
+    PREVIEW_POS = {"down": (1, 2), "down_left": (0, 2), "left": (0, 1), "up_left": (0, 0), "up": (1, 0),
+                   "up_right": (2, 0), "right": (2, 1), "down_right": (2, 2)}      # where each direction sits (3 x 3)
+
+    def set_preview(self, req):
+        """req: the export settings ({"cell", "dirs", "fps" or "frames"}) or None to go back to the 3D view."""
+        self.preview = req
+        self.preview_t = 0.0
+        self.preview_k = None
+        if req:
+            c = int(req.get("cell", 64))
+            self.preview_img = pyxel.Image(c * 3, c * 3)
+        Bridge.send("vrmvPreview", {"on": bool(req)})
+
+    def draw_preview(self):
+        fig, req = self.fig, self.preview
+        c = int(req.get("cell", 64))
+        dirs = DIRS8 if int(req.get("dirs", 8)) == 8 else DIRS4
+        m = self.motions.by_id.get(fig.motion) or self.motions.by_id["idle"]
+        n = sheet_frames(m, req, c)
+        step = 1.0 / float(req["fps"]) if req.get("fps") and not req.get("frames") and n < 8192 // c else None
+        speed = 1.0 / step if step else (n / m["seconds"] if m["loop"] else (n - 1) / m["seconds"])
+        k = int(self.preview_t * speed)
+        k = k % n if m["loop"] else min(k, n - 1)
+        if k != self.preview_k or getattr(self, "preview_mid", None) != m["id"]:   # draw again only on a new frame
+            self.preview_k, self.preview_mid = k, m["id"]
+            cam = self.stage.camera
+            old = (cam.fov, cam.clear_color, cam.transform, fig.motion, fig.t)
+            cam.fov, cam.clear_color = 12.0, V.KEY
+            fig.motion, fig.t = m["id"], frame_time(m, k, n, step)
+            fig.pose(0.0)
+            fig.skin()
+            self.preview_img.cls(V.KEY)
+            for d in dirs:
+                gx, gy = self.PREVIEW_POS[d]
+                self.sprite_camera(DIRS8.index(d) * 45.0)
+                self.stage.draw(gx * c, gy * c, c, c, target=self.preview_img)
+            cam.fov, cam.clear_color, cam.transform, fig.motion, fig.t = old
+        # show it as big as fits, in whole pixels when it can (the dots stay sharp)
+        size = c * 3
+        s = min((W - 8) / size, (H - 30) / size)
+        s = math.floor(s) if s >= 1 else s
+        x0, y0 = (W - size * s) / 2, 12 + (H - 30 - size * s) / 2
+        pyxel.blt(x0 + (size * s - size) / 2, y0 + (size * s - size) / 2, self.preview_img, 0, 0, size, size, V.KEY,
+                  scale=s)
+        fps_txt = "%d FPS" % round(speed) if step else "%.1f FPS" % speed
+        pyxel.text(4, 4, ("SPRITE PREVIEW  %d PX  %s  %d DIRECTIONS" % (c, fps_txt, len(dirs))), 7)
+        pyxel.text(4, H - 10, ("%s  %d FRAMES" % (m["label"], n)).upper()[:40], 13)
+        if s < 1:
+            pyxel.text(W - 4 - 4 * 13, H - 10, "SHOWN SMALLER", 5)
+        self.preview_t += 1 / 30
+
+    def user_motions_npz(self):
+        """The motions the user added (FBX / VRMA), in the format of motions.npz; None when there are none."""
+        user = [x for x in self.motions.meta if x.get("source") == "user"]
+        if not user:
+            return None
+        d = {"bones": np.array(self.motions.bones)}
+        meta = list(user)
+        for x in user:
+            d["d_" + x["id"]] = self.motions.D[x["id"]].astype(np.float16)
+            d["h_" + x["id"]] = self.motions.Hp[x["id"]].astype(np.float16)
+        d["meta"] = np.frombuffer(json.dumps(meta).encode(), np.uint8)
+        b = io.BytesIO()
+        np.savez_compressed(b, **d)
+        return b.getvalue()
 
     def deliver(self, path):
         """Browser: start a download.  Desktop: copy next to main.py."""
@@ -512,11 +694,15 @@ class App:
             except Exception as e:
                 self.job = None
                 Bridge.send("vrmvProgress", {"busy": False, "kind": self.job_kind})
-                Bridge.send("vrmvStatus", {"text": "Export failed: %s" % e, "error": True})
+                Bridge.send("vrmvStatus", {"text": "%s failed: %s" % ("Reading the motion" if self.job_kind == "fbx"
+                                                                      else "Export", e), "error": True})
             return
         f = self.new_file()
         if f:
-            self.load(f)
+            if f.lower().endswith((".fbx", ".vrma")):
+                self.job, self.job_kind, self.progress = self.read_motion(f), "fbx", (0.0, "")
+            else:
+                self.load(f)
             return
         for c in Bridge.commands():
             self.command(c)
@@ -547,7 +733,7 @@ class App:
         if pyxel.btnp(pyxel.KEY_T):
             self.command("motion:tpose")
         if pyxel.btnp(pyxel.KEY_E):
-            self.command("export:" + json.dumps({"cell": 64, "dirs": 8, "frames": 8,
+            self.command("export:" + json.dumps({"cell": 64, "dirs": 8, "fps": 10,
                                                  "motions": ["idle", "walk", "run", "jump", "punch", "hit", "death"]}))
         if pyxel.btnp(pyxel.KEY_D):
             self.command("export3d")
@@ -557,22 +743,35 @@ class App:
             self.command("gif")
         if pyxel.btnp(pyxel.KEY_L):
             self.show_lic = not self.show_lic
-        self.fig.pose(1 / 30)
+        if pyxel.btnp(pyxel.KEY_V):
+            self.command("preview:off" if self.preview else "preview:" + json.dumps({"cell": 64, "dirs": 8, "fps": 10}))
+        if not self.preview:
+            self.fig.pose(1 / 30)
 
     def draw(self):
         pyxel.cls(BG)
         if self.state == "drop":
             self.center(100, "DROP A VRM FILE HERE", 7)
             self.center(112, "(VRM 0.X / 1.0" + (", OR USE OPEN VRM ABOVE)" if js else ")"), 13)
+            self.center(124, ".FBX (MIXAMO ...) / .VRMA FILES ADD MOTIONS", 13)
             self.center(140, "NOTHING IS UPLOADED. THE FILE STAYS ON YOUR DEVICE.", 6)
             if self.err:
                 self.center(170, self.err, 8)
+            if self.note_t > 0:
+                self.note_t -= 1 / 30
+                self.center(186, self.note, 10)
+            if self.job is not None:
+                self.draw_overlays()
             return
         if self.state == "load":
             self.center(110, self.msg, 7)
             self.center(122, "PLEASE WAIT...", 13)
             return
         fig = self.fig
+        if self.preview:                                     # the sprite preview replaces the free 3D view
+            self.draw_preview()
+            self.draw_overlays()
+            return
         fig.skin()
         t0 = time.perf_counter()
         h = fig.m.height
@@ -601,26 +800,64 @@ class App:
                 pyxel.rect(3, y - 1, len(s) * 4 + 3, 8, 8)
                 pyxel.text(5, y, s, 7)
                 y += 9
-        if self.job is not None:
-            f, text = self.progress
-            pyxel.rect(40, H // 2 - 14, W - 80, 28, 0)
-            pyxel.rectb(40, H // 2 - 14, W - 80, 28, 7)
-            self.center(H // 2 - 9, ("EXPORTING " + ("3D" if self.job_kind == "3d" else "SPRITES") + "  " + text).upper()[:56], 7)
-            pyxel.rect(48, H // 2 + 2, int((W - 96) * f), 5, 11)
-            pyxel.rectb(48, H // 2 + 2, W - 96, 5, 13)
-        if self.note_t > 0:
-            self.note_t -= 1 / 30
-            pyxel.rect(0, H - 22, W, 10, 0)
-            self.center(H - 20, self.note, 10)
+        self.draw_overlays()
         if self.show_perf:
             tt = self.times
             pyxel.text(W - 132, 4, "TRIS %d VERTS %d" % (m.tris, m.verts), 10)
             pyxel.text(W - 132, 12, "READ %.2fS TEX %.2fS BUILD %.2fS" % (tt["read"], tt["textures"], tt["build"]), 10)
             pyxel.text(W - 132, 20, "SKIN %.1fMS DRAW %.1fMS" % (fig.skin_ms, self.draw_ms), 10 if fig.skin_ms + self.draw_ms < 33 else 8)
 
+    def draw_overlays(self):
+        """Export progress and short notes, over whatever the screen shows."""
+        if self.job is not None:
+            f, text = self.progress
+            pyxel.rect(40, H // 2 - 14, W - 80, 28, 0)
+            pyxel.rectb(40, H // 2 - 14, W - 80, 28, 7)
+            what = {"3d": "EXPORTING 3D", "fbx": "READING MOTIONS"}.get(self.job_kind, "EXPORTING SPRITES")
+            self.center(H // 2 - 9, (what + "  " + text).upper()[:56], 7)
+            pyxel.rect(48, H // 2 + 2, int((W - 96) * f), 5, 11)
+            pyxel.rectb(48, H // 2 + 2, W - 96, 5, 13)
+        if self.note_t > 0:
+            self.note_t -= 1 / 30
+            pyxel.rect(0, H - 22, W, 10, 0)
+            self.center(H - 20, self.note, 10)
+
     @staticmethod
     def center(y, s, col):
         pyxel.text(W // 2 - len(s) * 2, y, s, col)
+
+
+def short_list(names, n=8):
+    """"a, b, c and 12 more" (a README line stays readable)."""
+    return ", ".join(names[:n]) + (" and %d more" % (len(names) - n) if len(names) > n else "")
+
+
+def is_tpose(name):
+    """A take that only holds the T-pose (the viewer has its own T-pose)."""
+    return "tpose" in name.lower().replace("-", "").replace("_", "").replace(" ", "")
+
+
+def is_loop_name(name):
+    """Repeat it?  "Loop" in the name (Quaternius), idles and poses; the rest play once (Death01, Interact)."""
+    t = name.lower()
+    return "loop" in t or "idle" in t or "pose" in t
+
+
+def frame_time(m, k, n, step):
+    """Time (s) of frame k of n: every `step` seconds (by speed), or spread over the motion (fixed count / capped)."""
+    if step:
+        return min(k * step, m["seconds"]) if not m["loop"] else k * step
+    return m["seconds"] * k / n if m["loop"] else m["seconds"] * k / max(1, n - 1)
+
+
+def sheet_frames(m, req, cell):
+    """Frames of one motion in its sheet: a fixed count ("frames"), or by speed ("fps", the length decides), and then
+    no more than fits in 8192 px (long motions)."""
+    if req.get("frames"):
+        return max(2, int(req["frames"]))
+    fps = float(req.get("fps", 10))
+    n = max(2, int(round(m["seconds"] * fps)) + (0 if m["loop"] else 1))
+    return min(n, 8192 // cell)
 
 
 def gif_of_row(a, row, c, n, fps, loop):
@@ -638,8 +875,8 @@ def gif_of_row(a, row, c, n, fps, loop):
         f = Image.fromarray(np.ascontiguousarray(idx[:, k * c:(k + 1) * c]), "P").resize((c * 2, c * 2), Image.NEAREST)
         f.putpalette(palette)
         frames.append(f)
-    ms = max(20, int(round(1000 / max(fps, 1))))
-    durs = [ms] * n
+    ends = [int(round((k + 1) * 100 / max(fps, 1))) * 10 for k in range(n)]   # GIF delays are in 10 ms steps
+    durs = [max(20, e - b) for b, e in zip([0] + ends[:-1], ends)]
     if not loop:
         durs[-1] = 700                                        # one-shot motions: hold the last frame a moment
     b = io.BytesIO()
@@ -710,8 +947,9 @@ def readme_text(info):
         "The PNG and GIF files are ordinary images: open them in any image viewer or game tool",
         "(Unity, Godot, GameMaker, RPG Maker, Aseprite ...).",
         "  *_<motion>.png : one motion per image. Rows = directions, columns = frames.",
-        "  *_<motion>.gif : the same motion as an animation, facing the viewer.",
+        "  *_<motion>.gif : the front row of the sheet as an animation (same frames, same speed).",
         "Cell: %d x %d px.  Rows (top to bottom): %s" % (info["cell"], info["cell"], ", ".join(info["directions"])),
+        "Frames: %s." % info.get("timing", ""),
         "The background is transparent.",
         "",
         "== For Pyxel / programmers (optional) ==",
@@ -733,6 +971,10 @@ def readme_text(info):
         "== Motions ==",
         "Quaternius Universal Animation Library 1 and 2 (CC0) and KayKit Character Animations (CC0, Kay Lousberg),",
         "converted to VRM Animation by the open-vrma project.",
+    ] + ([
+        "Your own motions (FBX / VRMA): " + short_list(info["user_motions"]) + ".",
+        "  They keep the terms of where you got them.",
+    ] if info.get("user_motions") else []) + [
         "",
         "== Made with ==",
         "Pyxel 3 by Takashi Kitao (MIT License) - https://github.com/kitao/pyxel",
@@ -785,7 +1027,12 @@ def readme3d_text(info):
         "vrm_figure.py uses only pyxel, numpy, json, base64 and io (no os / sys).",
         "",
         "== Code & Magic ==",
-        "Upload model.tmx, motions.tmx, every tex_*.png, vrm_figure.py, and sample_3d.py renamed to main.py.",
+        "Upload model.tmx, motions.tmx (and my_motions.tmx if there is one), every tex_*.png, vrm_figure.py,",
+        "and sample_3d.py renamed to main.py.",
+    ] + ([
+        "NOTE: my_motions.tmx is %.1f MB, over Code & Magic's 3 MB per file. Add fewer motions of your own" % info["my_motions_mb"],
+        "  for Code & Magic (the files work in Pyxel itself).",
+    ] if info.get("my_motions_mb", 0) > 3.0 else []) + [
         "(The .tmx files are 1x1 Tiled maps carrying the numpy data as base64, because Code & Magic accepts",
         " .py / .png / .tmx / .glb / .ogg / .pyxres only.)",
         "",
@@ -797,6 +1044,11 @@ def readme3d_text(info):
         "== Motions ==",
         "Quaternius Universal Animation Library 1 and 2 (CC0) and KayKit Character Animations (CC0, Kay Lousberg),",
         "converted to VRM Animation by the open-vrma project.",
+    ] + ([
+        "Your own motions (FBX / VRMA) are in my_motions.tmx (ids start with my_): " + short_list(info["user_motions"]) + ".",
+        "  They keep the terms of where you got them. Mixamo, for example: fine inside your own games,",
+        "  but do not share the files or this data on their own (e.g. as an asset pack).",
+    ] if info.get("user_motions") else []) + [
         "",
         "== Code ==",
         "vrm_figure.py and sample_3d.py: MIT License (haruka_apps).",
