@@ -1,3 +1,15 @@
 .DS_Store
 __pycache__/
+*.pyc
 _to_delete/
+
+# made by tools/build_web.py (the release is on itch.io)
+vrm_viewer_itch.zip
+
+# files exported by the tool
+*_sprites.zip
+*_pyxel3d.zip
+
+# source data for the tools (not redistributed here, see README)
+vrma/
+samples/

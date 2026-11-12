@@ -2,6 +2,7 @@
 
     python tools/build_web.py
 """
+# SPDX-License-Identifier: MIT
 import shutil
 import subprocess
 import tempfile

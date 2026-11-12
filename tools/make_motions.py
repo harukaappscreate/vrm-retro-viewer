@@ -7,9 +7,13 @@ T-pose, plus the hips movement divided by the hips height.  Any VRM can then be 
     world(bone) = delta * rest_world(bone)
 (for VRM 0.x the delta is first turned by 180 degrees around Y, because 0.x faces -Z).
 
-Motions: Quaternius Universal Animation Library (CC0), converted to .vrma by the open-vrma project.
+Motions: Quaternius Universal Animation Library 1 & 2 and KayKit Character Animations (all CC0), converted to .vrma
+by the open-vrma project (https://huggingface.co/datasets/Sanami/open-vrma).  They are not in this repository; put
+quaternius/ual1 and quaternius/ual2 into vrma/q/, kaykit/medium into vrma/kk/medium/ and kaykit/large into
+vrma/kk/large/ (the CMU clips of open-vrma are not CC0 and are not used).
 A list of files is played one after another (the jump = start + in the air + landing); "file:0.4" keeps 0.4 s.
 """
+# SPDX-License-Identifier: MIT
 import io
 import json
 import sys

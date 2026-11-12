@@ -7,6 +7,7 @@ Arrows: walk (8 directions).  Hold X: run.  Z: the first attack motion in the ex
 sheet.json describes the files: cell size, direction rows, per motion its file, frames, fps and loop flag, and the
 256 colours every PNG is drawn in ("palette": set pyxel.colors to it, then load any PNG with Image.from_image).
 """
+# SPDX-License-Identifier: MIT
 import json
 import math
 import os

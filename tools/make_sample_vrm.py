@@ -5,6 +5,7 @@ blend shapes (not used by the viewer) and re-pack the GLB.
 
 Only for avatars whose license allows modification and redistribution (the bundled one is CC0).
 """
+# SPDX-License-Identifier: MIT
 import io
 import json
 import struct
