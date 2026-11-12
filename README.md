@@ -1,7 +1,7 @@
 # VRM RETRO VIEWER
 
-- 公開：https://haruka-apps-games.itch.io/vrm-retro-viewer（itch.io、無料の HTML5 ツール）
-- 記事：https://qiita.com/haruka_apps/items/29b897418b601cfacb6c
+- 公開（itch.io、無料の HTML5 ツール）：[haruka-apps-games.itch.io/vrm-retro-viewer](https://haruka-apps-games.itch.io/vrm-retro-viewer)
+- 記事（Qiita）：[Pyxel 3 をブラウザの「ツール」にする](https://qiita.com/haruka_apps/items/29b897418b601cfacb6c)
 
 VRM（0.x / 1.0）を開くと、Pyxel 3 のレトロな 3D で表示するビューアです。231 種類のモーション（CC0）で動かせて、2D ゲーム用のスプライトシート（PNG と GIF）や、Pyxel 3 用の 3D データを zip で書き出せます。
 
@@ -17,7 +17,7 @@ cd web
 python3 -m http.server
 ```
 
-ブラウザで http://localhost:8000 を開きます。初回は Pyodide と numpy・Pillow の読み込みに時間がかかります。
+ブラウザで `http://localhost:8000` を開きます。初回は Pyodide と numpy・Pillow の読み込みに時間がかかります。
 
 itch.io には `vrm_viewer_itch.zip`（index.html・vrm_viewer.pyxapp・sample.vrm の 3 ファイル）をアップロードします。
 
@@ -30,7 +30,7 @@ python main.py avatar.vrm      # ファイルを直接開く
 
 ## クレジット
 
-- Pyxel 3：Takashi Kitao（MIT License）https://github.com/kitao/pyxel
+- Pyxel 3：Takashi Kitao（MIT License）[github.com/kitao/pyxel](https://github.com/kitao/pyxel)
 - ブラウザ版で使っているもの：Pyodide（MPL-2.0）、NumPy（BSD-3-Clause）、Pillow（MIT-CMU）
 - モーション：Quaternius「Universal Animation Library」1・2（CC0）、Kay Lousberg「KayKit Character Animations」（CC0）。open-vrma プロジェクトによる .vrma 変換
 - サンプルアバター：千駄ヶ谷 渋（VRoid の CC0 サンプルモデル、軽量化して同梱）
