@@ -6,7 +6,7 @@ VRM（0.x / 1.0）を開くと、[Pyxel 3](https://github.com/kitao/pyxel) の�
 
 - ブラウザで試す（itch.io、無料）：[haruka-apps-games.itch.io/vrm-retro-viewer](https://haruka-apps-games.itch.io/vrm-retro-viewer)
 - 作り方の記事（Qiita）：[Pyxel 3 をブラウザの「ツール」にする](https://qiita.com/haruka_apps/items/29b897418b601cfacb6c)
-- 姉妹ツール：[VRM Motion Studio](https://github.com/harukaappscreate/vrm-motion-studio)、[VRM RETRO MAKER](https://github.com/harukaappscreate/vrm-retro-maker)、[VRM RETRO PAPERCRAFT](https://github.com/harukaappscreate/vrm-retro-papercraft)。4 つをまとめたページ：[VRM Retro シリーズ](https://harukaappscreate.github.io/vrm-retro/)
+- 姉妹ツール：[VRM Motion Studio](https://github.com/harukaappscreate/vrm-motion-studio)、[VRM RETRO MAKER](https://github.com/harukaappscreate/vrm-retro-maker)、[VRM RETRO PAPERCRAFT](https://github.com/harukaappscreate/vrm-retro-papercraft)、[VRM RETRO 4DGS STUDIO](https://github.com/harukaappscreate/vrm-retro-4dgs)。5 つをまとめたページ：[VRM Retro シリーズ](https://harukaappscreate.github.io/vrm-retro/)
 
 ![ブラウザでの画面：上に操作のバー、右にアバターのライセンスと書き出しの設定](docs/images/ui.png)
 

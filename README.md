@@ -6,7 +6,7 @@ Open a VRM avatar (0.x or 1.0) and see it as a retro 3D figure in [Pyxel 3](http
 
 - **Try it in your browser (free):** [haruka-apps-games.itch.io/vrm-retro-viewer](https://haruka-apps-games.itch.io/vrm-retro-viewer)
 - **How it was made (Japanese):** [Qiita article](https://qiita.com/haruka_apps/items/29b897418b601cfacb6c)
-- **Sister tools:** [VRM Motion Studio](https://github.com/harukaappscreate/vrm-motion-studio), [VRM RETRO MAKER](https://github.com/harukaappscreate/vrm-retro-maker), [VRM RETRO PAPERCRAFT](https://github.com/harukaappscreate/vrm-retro-papercraft). All four on one page: [VRM Retro series](https://harukaappscreate.github.io/vrm-retro/)
+- **Sister tools:** [VRM Motion Studio](https://github.com/harukaappscreate/vrm-motion-studio), [VRM RETRO MAKER](https://github.com/harukaappscreate/vrm-retro-maker), [VRM RETRO PAPERCRAFT](https://github.com/harukaappscreate/vrm-retro-papercraft), [VRM RETRO 4DGS STUDIO](https://github.com/harukaappscreate/vrm-retro-4dgs). All five on one page: [VRM Retro series](https://harukaappscreate.github.io/vrm-retro/)
 
 ![The tool in the browser: a tool bar on top, the avatar's license and the export settings on the right](docs/images/ui.png)
 
